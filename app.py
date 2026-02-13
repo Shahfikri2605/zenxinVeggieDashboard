@@ -6,14 +6,14 @@ from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(layout="wide", page_title="Zenxin Veggie Dashboard")
-
+st.set_page_config(layout="wide", page_title="Zenxin 3 Request & 3 Reduce Dashboard")
 
 SHEET_MAPPING = {
     "NTUC": st.secrets["sheet_ids"]["ntuc"], 
     "CS": st.secrets["sheet_ids"]["cs"],
     "SS": st.secrets["sheet_ids"]["ss"]
 }
+
 @st.cache_resource
 def get_gspread_client():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -33,14 +33,11 @@ def load_data(sheet_id):
             
         df = pd.DataFrame(data[1:], columns=data[0])
         
-        
         df = df[df['Location'] != ""]
         df = df[df['Date'] != ""]
         
-       
         if 'Date' in df.columns:
             df['Date_dt'] = pd.to_datetime(df['Date'], format='mixed', dayfirst=False, errors='coerce')
-        
         
         if 'Time' in df.columns:
             df['Time_sort'] = pd.to_timedelta(df['Time'].astype(str), errors='coerce')
@@ -51,7 +48,7 @@ def load_data(sheet_id):
         st.error(f"Error loading sheet: {e}")
         return pd.DataFrame()
 
-
+# Custom Styling
 st.markdown("""
     <style>
     thead tr th:first-child {display:none !important;}
@@ -62,7 +59,7 @@ st.markdown("""
     .main { background-color: #0e1117; }
     
     .table-header {
-        font-size: 32px; font-weight: bold; padding: 10px;
+        font-size: 28px; font-weight: bold; padding: 10px;
         border-radius: 5px; margin-bottom: 10px; text-align: center;
     }
     .req-header { background-color: #2e7d32; color: white; }
@@ -80,7 +77,6 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-
 def split_item_and_origin(item):
     if not isinstance(item, str) or 'N/A' in item or item.strip() == '' or item.lower() in ['nan', 'none']:
         return None, None
@@ -92,13 +88,10 @@ def split_item_and_origin(item):
         return clean_name, origin_label
     return item, "Imported"
 
-
-
-
 if 'search_clicked' not in st.session_state:
     st.session_state.search_clicked = False
 
-st.title("🥬 Zenxin Veggie Replenishment Dashboard")
+st.title("🥬 Zenxin 3 Request & 3 Reduce Dashboard")
 
 selected_store = st.selectbox("Select Store Chain:", list(SHEET_MAPPING.keys()))
 
@@ -169,28 +162,75 @@ if st.session_state.search_clicked:
             st.divider()
             st.markdown(f"### Results for {selected_store} ({start} to {end})")
 
-            df_request = filtered_df[filtered_df['Type'] == 'REQUEST'][["Location", "Vegetable", "Origin"]]
-            df_reduce = filtered_df[filtered_df['Type'] == 'REDUCE'][["Location", "Vegetable", "Origin"]]
+            # --- ADDING TABS HERE ---
+            tab1, tab2 = st.tabs(["🏆 Top Locations (Click to Expand Details)", "📋 Full Table View"])
 
-            show_req = "REQUEST" in sel_types
-            show_red = "REDUCE" in sel_types
+            # --- TAB 1: SUMMARY & DRILL DOWN ---
+            with tab1:
+                if not filtered_df.empty:
+                    # Calculate counts for each location
+                    summary = filtered_df.groupby(['Location', 'Type']).size().unstack(fill_value=0).reset_index()
+                    
+                    # Ensure columns exist even if one type has 0 entries
+                    if 'REQUEST' not in summary.columns: summary['REQUEST'] = 0
+                    if 'REDUCE' not in summary.columns: summary['REDUCE'] = 0
+                        
+                    # Calculate total and sort highest to lowest
+                    summary['Total'] = summary['REQUEST'] + summary['REDUCE']
+                    summary = summary.sort_values(by='Total', ascending=False)
 
-            if show_req and show_red:
-                c_left, c_right = st.columns(2)
-                with c_left:
-                    st.markdown('<div class="table-header req-header">📥 REQUEST LIST</div>', unsafe_allow_html=True)
-                    st.table(df_request)
-                with c_right:
-                    st.markdown('<div class="table-header red-header">📤 REDUCE LIST</div>', unsafe_allow_html=True)
-                    st.table(df_reduce)
-            
-            elif show_req:
-                st.markdown('<div class="table-header req-header">📥 REQUEST LIST</div>', unsafe_allow_html=True)
-                st.table(df_request)
+                    # Create a clickable expander for each location
+                    for _, row in summary.iterrows():
+                        loc = row['Location']
+                        req_c = row['REQUEST']
+                        red_c = row['REDUCE']
+                        
+                        # The Expander acts as the clickable button
+                        with st.expander(f"📍 {loc}   |   📥 {req_c} Requests   |   📤 {red_c} Reduces"):
+                            
+                            # Filter data just for this specific location
+                            loc_df = filtered_df[filtered_df['Location'] == loc]
+                            loc_req = loc_df[loc_df['Type'] == 'REQUEST'][["Vegetable", "Origin"]]
+                            loc_red = loc_df[loc_df['Type'] == 'REDUCE'][["Vegetable", "Origin"]]
+
+                            # Display the side-by-side tables inside the dropdown
+                            c_left, c_right = st.columns(2)
+                            with c_left:
+                                st.markdown('<div class="table-header req-header">📥 REQUEST</div>', unsafe_allow_html=True)
+                                if not loc_req.empty: st.table(loc_req)
+                                else: st.info("No Requests")
+                            with c_right:
+                                st.markdown('<div class="table-header red-header">📤 REDUCE</div>', unsafe_allow_html=True)
+                                if not loc_red.empty: st.table(loc_red)
+                                else: st.info("No Reduces")
+                else:
+                    st.warning("No data found for these filters.")
+
+
+            # --- TAB 2: ORIGINAL FULL VIEW ---
+            with tab2:
+                df_request = filtered_df[filtered_df['Type'] == 'REQUEST'][["Location", "Vegetable", "Origin"]]
+                df_reduce = filtered_df[filtered_df['Type'] == 'REDUCE'][["Location", "Vegetable", "Origin"]]
+
+                show_req = "REQUEST" in sel_types
+                show_red = "REDUCE" in sel_types
+
+                if show_req and show_red:
+                    c_left, c_right = st.columns(2)
+                    with c_left:
+                        st.markdown('<div class="table-header req-header">📥 ALL REQUESTS</div>', unsafe_allow_html=True)
+                        st.table(df_request)
+                    with c_right:
+                        st.markdown('<div class="table-header red-header">📤 ALL REDUCES</div>', unsafe_allow_html=True)
+                        st.table(df_reduce)
                 
-            elif show_red:
-                st.markdown('<div class="table-header red-header">📤 REDUCE LIST</div>', unsafe_allow_html=True)
-                st.table(df_reduce)
+                elif show_req:
+                    st.markdown('<div class="table-header req-header">📥 ALL REQUESTS</div>', unsafe_allow_html=True)
+                    st.table(df_request)
+                    
+                elif show_red:
+                    st.markdown('<div class="table-header red-header">📤 ALL REDUCES</div>', unsafe_allow_html=True)
+                    st.table(df_reduce)
 
         else:
             st.warning("No data found in the selected sheet.")

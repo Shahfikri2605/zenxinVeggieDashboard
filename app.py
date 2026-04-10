@@ -33,9 +33,8 @@ def load_data(sheet_id):
         df = pd.DataFrame(data[1:], columns=data[0])
         df.columns = df.columns.str.strip() 
 
-# Now the filters below will be more reliable
+        # Filter reliable data
         df = df[df['Location'].str.strip() != ""]
-        
         df = df[df['Location'] != ""]
         df = df[df['Date'] != ""]
         
@@ -107,9 +106,12 @@ with c1:
 with c2:
     try:
         pre_load = load_data(SHEET_MAPPING[selected_store])
-        u_locs = sorted(pre_load['Location'].dropna().unique())
-        u_origins = sorted([x for x in pre_load.stack().apply(lambda s: split_item_and_origin(str(s))[1]).unique() if x])
-    except:
+        # FIX 1: Cast to string before sorting to prevent crash on mixed data types in cloud
+        u_locs = sorted(pre_load['Location'].dropna().astype(str).unique())
+        u_origins = sorted([str(x) for x in pre_load.stack().apply(lambda s: split_item_and_origin(str(s))[1]).unique() if x])
+    except Exception as e:
+        # Show error instead of failing silently so it's easier to debug in the future
+        st.warning(f"Filter initialization warning: {e}")
         u_locs = []
         u_origins = []
         
@@ -148,22 +150,30 @@ if st.session_state.search_clicked:
                     })
 
         df_display = pd.DataFrame(all_rows)
+        
         # TEMPORARY DEBUGGING
         with st.expander("🛠️ Debug Raw Data (Cloud)"):
             st.write("First 5 rows of loaded data:")
             st.write(df_display.head())
-            st.write("Date Column Type:", df_display['Date'].dtype)
-            #st.write("Filter Start:", start, "End:", end)
+            if not df_display.empty:
+                st.write("Date Column Type:", df_display['Date'].dtype)
 
         if not df_display.empty:
             start, end = date_range if len(date_range) == 2 else (date_range[0], date_range[0])
             
-            final_locs = u_locs if "ALL" in sel_locs else sel_locs
-            mask_origin = df_display['Origin'].apply(lambda x: any(o in str(x) for o in sel_origins)) if "ALL" not in sel_origins else True
+            # FIX 2: Convert dates to pandas datetime objects for robust filtering
+            df_display['Date_Filter'] = pd.to_datetime(df_display['Date'])
+            start_dt = pd.to_datetime(start)
+            end_dt = pd.to_datetime(end)
+            
+            # Safe 'ALL' logic that doesn't rely on pre-loaded lists
+            mask_loc = True if "ALL" in sel_locs else df_display['Location'].isin(sel_locs)
+            mask_origin = True if "ALL" in sel_origins else df_display['Origin'].apply(lambda x: any(o in str(x) for o in sel_origins))
 
-            mask = (df_display['Date'] >= start) & (df_display['Date'] <= end) & \
-                   (df_display['Location'].isin(final_locs)) & \
-                   (mask_origin) & \
+            mask = (df_display['Date_Filter'] >= start_dt) & \
+                   (df_display['Date_Filter'] <= end_dt) & \
+                   mask_loc & \
+                   mask_origin & \
                    (df_display['Type'].isin(sel_types))
 
             filtered_df = df_display[mask].copy()
@@ -195,7 +205,7 @@ if st.session_state.search_clicked:
                         red_c = row['REDUCE']
                         
                         # The Expander acts as the clickable button
-                        with st.expander(f"📍 {loc}   |   📥 {req_c} Requests   |   📤 {red_c} Reduces"):
+                        with st.expander(f"📍 {loc}   |   📥 {req_c} Requests   |   📤 {red_c} Reduces"):
                             
                             # Filter data just for this specific location
                             loc_df = filtered_df[filtered_df['Location'] == loc]
@@ -245,4 +255,4 @@ if st.session_state.search_clicked:
             st.warning("No data found in the selected sheet.")
 
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error processing data: {e}")

@@ -31,6 +31,10 @@ def load_data(sheet_id):
             return pd.DataFrame()
             
         df = pd.DataFrame(data[1:], columns=data[0])
+        df.columns = df.columns.str.strip() 
+
+# Now the filters below will be more reliable
+        df = df[df['Location'].str.strip() != ""]
         
         df = df[df['Location'] != ""]
         df = df[df['Date'] != ""]
@@ -144,6 +148,12 @@ if st.session_state.search_clicked:
                     })
 
         df_display = pd.DataFrame(all_rows)
+        # TEMPORARY DEBUGGING
+        with st.expander("🛠️ Debug Raw Data (Cloud)"):
+            st.write("First 5 rows of loaded data:")
+            st.write(df_display.head())
+            st.write("Date Column Type:", df_display['Date'].dtype)
+            #st.write("Filter Start:", start, "End:", end)
 
         if not df_display.empty:
             start, end = date_range if len(date_range) == 2 else (date_range[0], date_range[0])

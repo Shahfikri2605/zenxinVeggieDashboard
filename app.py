@@ -4,7 +4,9 @@ import re
 from datetime import datetime
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import plotly.express as px # Added for analysis charts
+import plotly.express as px
+import io # <-- Added for Excel export
+import xlsxwriter.utility
 
 st.set_page_config(layout="wide", page_title="Zenxin 3 Request & 3 Reduce Dashboard")
 
@@ -47,6 +49,213 @@ def load_data(sheet_id, store_name):
     except Exception as e:
         st.error(f"Error loading sheet: {e}")
         return pd.DataFrame()
+
+# --- NEW FUNCTION: Generate Styled Excel ---
+import xlsxwriter.utility 
+import io
+import pandas as pd
+
+def generate_excel(df, selected_store, start_date, end_date):
+    output = io.BytesIO()
+    
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        workbook = writer.book
+        
+        # --- DEFINE FORMATS ---
+        # NEW: Formats for the Report Title and Date
+        report_title_format = workbook.add_format({
+            'bold': True, 'font_size': 18, 'font_color': '#1b5e20', 'valign': 'vcenter'
+        })
+        report_date_format = workbook.add_format({
+            'italic': True, 'font_size': 12, 'font_color': '#555555', 'valign': 'vcenter'
+        })
+        
+        # Existing Formats
+        loc_header_format = workbook.add_format({
+            'bold': True, 'bg_color': '#1E1E24', 'font_color': 'white', 'font_size': 12, 'valign': 'vcenter', 'border': 1
+        })
+        req_title_format = workbook.add_format({'bold': True, 'align': 'center', 'bg_color': '#2e7d32', 'font_color': 'white', 'font_size': 14})
+        red_title_format = workbook.add_format({'bold': True, 'align': 'center', 'bg_color': '#c62828', 'font_color': 'white', 'font_size': 14})
+        col_header_format = workbook.add_format({'bold': True, 'bg_color': '#1b5e20', 'font_color': 'white', 'bottom': 1})
+        req_header_format = workbook.add_format({'bold': True, 'bg_color': '#2e7d32', 'font_color': 'white', 'border': 1})
+        red_header_format = workbook.add_format({'bold': True, 'bg_color': '#c62828', 'font_color': 'white', 'border': 1})
+        analysis_header_format = workbook.add_format({'bold': True, 'bg_color': '#1b5e20', 'font_color': 'white', 'border': 1})
+        sub_header_format = workbook.add_format({'bold': True, 'bg_color': '#e0e0e0', 'border': 1})
+
+        loc_counts = df.groupby('Location').size().reset_index(name='Total')
+        loc_order = loc_counts.sort_values(by='Total', ascending=False)['Location'].tolist()
+        
+        df_full = df.copy()
+        df_full['Location'] = pd.Categorical(df_full['Location'], categories=loc_order, ordered=True)
+        df_full = df_full.sort_values(['Location', 'Date', 'Vegetable'])
+
+        # =======================================================
+        # SHEET 1: TOP LOCATIONS
+        # =======================================================
+        ws_top = workbook.add_worksheet('Top Locations')
+        
+        # ADD TITLE & DATE
+        ws_top.write('A1', 'Supermarket Request and Reduce Item Report', report_title_format)
+        ws_top.write('A2', f'Date: {start_date} to {end_date}', report_date_format)
+        
+        current_row = 3 # Shift data down to row 3 (0-indexed, so it's the 4th row)
+        
+        for loc in loc_order:
+            loc_df = df_full[df_full['Location'] == loc]
+            req_df = loc_df[loc_df['Type'] == 'REQUEST'].reset_index(drop=True)
+            red_df = loc_df[loc_df['Type'] == 'REDUCE'].reset_index(drop=True)
+            
+            req_count = len(req_df)
+            red_count = len(red_df)
+            
+            header_str = f"📍 {loc}   |   📥 {req_count} Req   |   📤 {red_count} Red"
+            ws_top.merge_range(current_row, 0, current_row, 6, header_str, loc_header_format)
+            header_row = current_row
+            current_row += 1
+            
+            ws_top.merge_range(current_row, 0, current_row, 2, "📥 REQUEST", req_title_format)
+            ws_top.merge_range(current_row, 4, current_row, 6, "📤 REDUCE", red_title_format)
+            current_row += 1
+            
+            headers = ['Vegetable', 'Qty', 'Origin']
+            for i, h in enumerate(headers):
+                ws_top.write(current_row, i, h, col_header_format)
+                ws_top.write(current_row, i+4, h, col_header_format)
+            current_row += 1
+            
+            start_data_row = current_row
+            
+            for i, row in req_df.iterrows():
+                ws_top.write(start_data_row + i, 0, row['Vegetable'])
+                ws_top.write(start_data_row + i, 1, row.get('Qty', ''))
+                ws_top.write(start_data_row + i, 2, row.get('Origin', ''))
+                
+            for i, row in red_df.iterrows():
+                ws_top.write(start_data_row + i, 4, row['Vegetable'])
+                ws_top.write(start_data_row + i, 5, row.get('Qty', ''))
+                ws_top.write(start_data_row + i, 6, row.get('Origin', ''))
+                
+            max_rows = max(len(req_df), len(red_df))
+            end_data_row = start_data_row + max_rows
+            
+            for r in range(header_row + 1, end_data_row):
+                ws_top.set_row(r, None, None, {'level': 1, 'hidden': True})
+            
+            current_row = end_data_row
+            ws_top.set_row(current_row, 10) 
+            current_row += 1 
+
+        ws_top.set_column('A:A', 30) 
+        ws_top.set_column('B:B', 8)  
+        ws_top.set_column('C:C', 15) 
+        ws_top.set_column('D:D', 3)  
+        ws_top.set_column('E:E', 30) 
+        ws_top.set_column('F:F', 8)  
+        ws_top.set_column('G:G', 15) 
+        
+        ws_top.outline_settings(symbols_below=False)
+
+
+        # =======================================================
+        # SHEET 2: ALL REQUESTS
+        # =======================================================
+        df_req = df_full[df_full['Type'] == 'REQUEST'].drop(columns=['Type'])
+        # Pass startrow=3 to push the dataframe down
+        df_req.to_excel(writer, index=False, sheet_name='All Requests', startrow=3)
+        ws_req = writer.sheets['All Requests']
+        
+        # ADD TITLE & DATE
+        ws_req.write('A1', 'Supermarket Request and Reduce Item Report', report_title_format)
+        ws_req.write('A2', f'Date: {start_date} to {end_date}', report_date_format)
+
+        for col_num, value in enumerate(df_req.columns.values):
+            ws_req.write(3, col_num, value, req_header_format) # Write header on row 3
+            max_len = max(df_req[value].astype(str).map(len).max() if not df_req.empty else 0, len(str(value))) + 2
+            ws_req.set_column(col_num, col_num, max_len)
+
+        # =======================================================
+        # SHEET 3: ALL REDUCES
+        # =======================================================
+        df_red = df_full[df_full['Type'] == 'REDUCE'].drop(columns=['Type'])
+        # Pass startrow=3 to push the dataframe down
+        df_red.to_excel(writer, index=False, sheet_name='All Reduces', startrow=3)
+        ws_red = writer.sheets['All Reduces']
+        
+        # ADD TITLE & DATE
+        ws_red.write('A1', 'Supermarket Request and Reduce Item Report', report_title_format)
+        ws_red.write('A2', f'Date: {start_date} to {end_date}', report_date_format)
+
+        for col_num, value in enumerate(df_red.columns.values):
+            ws_red.write(3, col_num, value, red_header_format) # Write header on row 3
+            max_len = max(df_red[value].astype(str).map(len).max() if not df_red.empty else 0, len(str(value))) + 2
+            ws_red.set_column(col_num, col_num, max_len)
+
+        # =======================================================
+        # SHEET 4: ANALYSIS
+        # =======================================================
+        ws_analysis = workbook.add_worksheet('Analysis')
+        
+        # ADD TITLE & DATE
+        ws_analysis.write('A1', 'Supermarket Request and Reduce Item Report', report_title_format)
+        ws_analysis.write('A2', f'Date: {start_date} to {end_date}', report_date_format)
+        
+        if selected_store == "MYS":
+            item_analysis = df.groupby(['Vegetable', 'Type'])['Qty'].sum().unstack(fill_value=0).reset_index()
+        else:
+            item_analysis = df.groupby(['Vegetable', 'Type']).size().unstack(fill_value=0).reset_index()
+            
+        for t in ['REQUEST', 'REDUCE']:
+            if t not in item_analysis.columns: item_analysis[t] = 0
+            
+        top_req = item_analysis[['Vegetable', 'REQUEST']].sort_values(by='REQUEST', ascending=False).head(10)
+        top_red = item_analysis[['Vegetable', 'REDUCE']].sort_values(by='REDUCE', ascending=False).head(10)
+        
+        # Shift rows down by 3 (Row 1 becomes Row 4)
+        ws_analysis.merge_range('A4:B4', 'Top 10 Requested Items', analysis_header_format)
+        ws_analysis.write('A5', 'Vegetable', sub_header_format)
+        ws_analysis.write('B5', 'Qty', sub_header_format)
+        for i, (index, row) in enumerate(top_req.iterrows()):
+            ws_analysis.write(i+5, 0, row['Vegetable'])
+            ws_analysis.write(i+5, 1, row['REQUEST'])
+            
+        ws_analysis.merge_range('D4:E4', 'Top 10 Reduced Items', analysis_header_format)
+        ws_analysis.write('D5', 'Vegetable', sub_header_format)
+        ws_analysis.write('E5', 'Qty', sub_header_format)
+        for i, (index, row) in enumerate(top_red.iterrows()):
+            ws_analysis.write(i+5, 3, row['Vegetable'])
+            ws_analysis.write(i+5, 4, row['REDUCE'])
+            
+        ws_analysis.set_column('A:A', 25)
+        ws_analysis.set_column('D:D', 25)
+
+        num_req = len(top_req)
+        if num_req > 0:
+            chart_req = workbook.add_chart({'type': 'bar'})
+            chart_req.add_series({
+                'name':       'Requested Qty',
+                'categories': ['Analysis', 5, 0, 4 + num_req, 0], 
+                'values':     ['Analysis', 5, 1, 4 + num_req, 1], 
+                'fill':       {'color': '#2e7d32'}
+            })
+            chart_req.set_title({'name': 'Top 10 Requested Items'})
+            chart_req.set_legend({'none': True})
+            ws_analysis.insert_chart('A17', chart_req, {'x_scale': 1.2, 'y_scale': 1.2}) # Shifted chart down
+
+        num_red = len(top_red)
+        if num_red > 0:
+            chart_red = workbook.add_chart({'type': 'bar'})
+            chart_red.add_series({
+                'name':       'Reduced Qty',
+                'categories': ['Analysis', 5, 3, 4 + num_red, 3],
+                'values':     ['Analysis', 5, 4, 4 + num_red, 4],
+                'fill':       {'color': '#c62828'}
+            })
+            chart_red.set_title({'name': 'Top 10 Reduced Items'})
+            chart_red.set_legend({'none': True})
+            ws_analysis.insert_chart('F17', chart_red, {'x_scale': 1.2, 'y_scale': 1.2}) # Shifted chart down
+
+    return output.getvalue()
+# -----------------------------------------
 
 # Custom Styling
 st.markdown("""
@@ -142,8 +351,28 @@ if st.session_state.search_clicked:
             mask &= df_display['Type'].isin(sel_types)
 
             filtered_df = df_display[mask].copy()
+            # Drop the internal filtering column before exporting/displaying
+            filtered_df = filtered_df.drop(columns=['Date_Filter']) 
+
             st.divider()
-            st.markdown(f"### Results for {selected_store} ({start} to {end})")
+            
+            # --- ADDED EXCEL DOWNLOAD BUTTON ---
+            # --- EXCEL DOWNLOAD BUTTON ---
+            col_title, col_download = st.columns([3, 1])
+            with col_title:
+                st.markdown(f"### Results for {selected_store} ({start} to {end})")
+            with col_download:
+                # Add start and end to this function call!
+                excel_data = generate_excel(filtered_df, selected_store, start, end) 
+                
+                st.download_button(
+                    label="📥 Download Detailed Excel Report",
+                    data=excel_data,
+                    file_name=f"Zenxin_{selected_store}_Report_{start}_to_{end}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+            # -----------------------------------
 
             # --- TABS ---
             tab1, tab2, tab3 = st.tabs(["🏆 Top Locations", "📋 Full Table View", "📊 Analysis"])

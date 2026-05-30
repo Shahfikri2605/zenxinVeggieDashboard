@@ -11,7 +11,8 @@ import xlsxwriter.utility
 st.set_page_config(layout="wide", page_title="Zenxin 3 Request & 3 Reduce Dashboard")
 
 SHEET_MAPPING = {
-    "MYS": st.secrets["sheet_ids"]["mys"], 
+    "Supermarket MYS": st.secrets["sheet_ids"]["mys"],
+    "Retail/Outlet MYS" : st.secrets["sheet_ids"]["outlet"],
     "NTUC": st.secrets["sheet_ids"]["ntuc"], 
     "CS": st.secrets["sheet_ids"]["cs"],
     "SS": st.secrets["sheet_ids"]["ss"]
@@ -28,7 +29,7 @@ def load_data(sheet_id, store_name):
     try:
         client = get_gspread_client()
         sh = client.open_by_key(sheet_id)
-        if store_name == "MYS":
+        if store_name in ['Supermarket MYS','Retail/Outlet MYS']:
             try: worksheet = sh.worksheet("Main Data")
             except: worksheet = sh.get_worksheet(3) 
         else: worksheet = sh.get_worksheet(0)
@@ -95,7 +96,7 @@ def generate_excel(df, selected_store, start_date, end_date):
         ws_top = workbook.add_worksheet('Top Locations')
         
         # ADD TITLE & DATE
-        ws_top.write('A1', 'Supermarket Request and Reduce Item Report', report_title_format)
+        ws_top.write('A1', 'Request and Reduce Item Report', report_title_format)
         ws_top.write('A2', f'Date: {start_date} to {end_date}', report_date_format)
         
         current_row = 3 # Shift data down to row 3 (0-indexed, so it's the 4th row)
